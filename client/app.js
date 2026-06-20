@@ -7,8 +7,15 @@ const state = {
   history: [],
   future: [],
   violations: {},
+  violationCount: 0,
   isValid: false,
   dragSource: null,
+  score: 0,
+  timer: null,
+  startTime: null,
+  elapsedSeconds: 0,
+  isLevelComplete: false,
+  highScores: {},
 };
 
 const elements = {
@@ -19,16 +26,26 @@ const elements = {
   shelf: document.getElementById('shelf'),
   placedCount: document.getElementById('placedCount'),
   requiredCount: document.getElementById('requiredCount'),
+  scoreDisplay: document.getElementById('scoreDisplay'),
+  timerDisplay: document.getElementById('timerDisplay'),
   statusResult: document.getElementById('statusResult'),
   violationList: document.getElementById('violationList'),
   undoBtn: document.getElementById('undoBtn'),
   redoBtn: document.getElementById('redoBtn'),
   clearBtn: document.getElementById('clearBtn'),
   checkBtn: document.getElementById('checkBtn'),
+  resultModal: document.getElementById('resultModal'),
+  finalScore: document.getElementById('finalScore'),
+  finalTime: document.getElementById('finalTime'),
+  highScore: document.getElementById('highScore'),
+  isNewRecord: document.getElementById('isNewRecord'),
+  closeModalBtn: document.getElementById('closeModalBtn'),
+  retryBtn: document.getElementById('retryBtn'),
 };
 
 async function init() {
   try {
+    loadHighScores();
     await fetchProducts();
     await loadLevel(elements.levelSelect.value);
     bindEvents();
@@ -50,7 +67,14 @@ async function loadLevel(levelId) {
   state.history = [];
   state.future = [];
   state.violations = {};
+  state.violationCount = 0;
   state.isValid = false;
+  state.score = 0;
+  state.isLevelComplete = false;
+  state.elapsedSeconds = 0;
+
+  stopTimer();
+  startTimer();
 
   renderLevelInfo();
   renderProductList();
@@ -58,6 +82,8 @@ async function loadLevel(levelId) {
   updateStatus();
   updateUndoRedoButtons();
   renderViolations();
+  updateScoreDisplay();
+  updateTimerDisplay();
 }
 
 function renderLevelInfo() {
@@ -356,6 +382,110 @@ function updateUndoRedoButtons() {
   elements.redoBtn.disabled = state.future.length === 0;
 }
 
+function calculateScore() {
+  const placedCount = state.shelfSlots.filter(s => s !== null).length;
+  const baseScore = placedCount * 10;
+  const penalty = state.violationCount * 5;
+  return Math.max(0, baseScore - penalty);
+}
+
+function updateScore() {
+  state.score = calculateScore();
+  updateScoreDisplay();
+}
+
+function updateScoreDisplay() {
+  if (elements.scoreDisplay) {
+    elements.scoreDisplay.textContent = state.score;
+  }
+}
+
+function startTimer() {
+  if (state.timer) return;
+  state.startTime = Date.now() - state.elapsedSeconds * 1000;
+  state.timer = setInterval(() => {
+    state.elapsedSeconds = Math.floor((Date.now() - state.startTime) / 1000);
+    updateTimerDisplay();
+  }, 1000);
+}
+
+function stopTimer() {
+  if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+}
+
+function updateTimerDisplay() {
+  if (elements.timerDisplay) {
+    const mins = Math.floor(state.elapsedSeconds / 60);
+    const secs = state.elapsedSeconds % 60;
+    elements.timerDisplay.textContent =
+      `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+}
+
+function loadHighScores() {
+  try {
+    const saved = localStorage.getItem('shelfGame_highScores');
+    if (saved) {
+      state.highScores = JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('加载历史最高分时出错:', e);
+    state.highScores = {};
+  }
+}
+
+function saveHighScore(levelId, score) {
+  if (!state.highScores[levelId] || score > state.highScores[levelId]) {
+    state.highScores[levelId] = score;
+    try {
+      localStorage.setItem('shelfGame_highScores', JSON.stringify(state.highScores));
+    } catch (e) {
+      console.error('保存历史最高分时出错:', e);
+    }
+    return true;
+  }
+  return false;
+}
+
+function getHighScore(levelId) {
+  return state.highScores[levelId] || 0;
+}
+
+function showResultModal() {
+  if (!elements.resultModal) return;
+
+  const levelId = state.currentLevel.id;
+  const currentScore = state.score;
+  const isNew = saveHighScore(levelId, currentScore);
+
+  elements.finalScore.textContent = currentScore;
+  elements.finalTime.textContent = formatTime(state.elapsedSeconds);
+  elements.highScore.textContent = getHighScore(levelId);
+
+  if (isNew) {
+    elements.isNewRecord.style.display = 'block';
+  } else {
+    elements.isNewRecord.style.display = 'none';
+  }
+
+  elements.resultModal.style.display = 'flex';
+}
+
+function hideResultModal() {
+  if (elements.resultModal) {
+    elements.resultModal.style.display = 'none';
+  }
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}分${secs}秒`;
+}
+
 function showStatus(message, type = '') {
   elements.statusResult.textContent = message;
   elements.statusResult.className = 'status-result ' + type;
@@ -380,11 +510,23 @@ async function validateShelf() {
     state.violations = result.violationMap || {};
     state.isValid = result.valid;
 
+    const nonMissingViolations = (result.violations || []).filter(v => v.type !== 'missing');
+    state.violationCount = nonMissingViolations.length;
+
+    updateScore();
+
     renderShelf();
     renderViolations(result);
 
     if (result.valid) {
-      showStatus('🎉 恭喜！所有商品摆放合规！', 'success');
+      if (!state.isLevelComplete) {
+        state.isLevelComplete = true;
+        stopTimer();
+        showStatus('🎉 恭喜！所有商品摆放合规！', 'success');
+        setTimeout(() => {
+          showResultModal();
+        }, 500);
+      }
     } else if (result.violations.length > 0) {
       const vCount = result.violations.filter(v => v.type !== 'missing').length;
       if (vCount > 0) {
@@ -431,6 +573,25 @@ function bindEvents() {
   elements.clearBtn.addEventListener('click', clearShelf);
   elements.checkBtn.addEventListener('click', validateShelf);
 
+  if (elements.closeModalBtn) {
+    elements.closeModalBtn.addEventListener('click', hideResultModal);
+  }
+
+  if (elements.retryBtn) {
+    elements.retryBtn.addEventListener('click', () => {
+      hideResultModal();
+      loadLevel(state.currentLevel.id);
+    });
+  }
+
+  if (elements.resultModal) {
+    elements.resultModal.addEventListener('click', (e) => {
+      if (e.target === elements.resultModal) {
+        hideResultModal();
+      }
+    });
+  }
+
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
@@ -439,6 +600,9 @@ function bindEvents() {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
       e.preventDefault();
       redo();
+    }
+    if (e.key === 'Escape' && elements.resultModal && elements.resultModal.style.display === 'flex') {
+      hideResultModal();
     }
   });
 }

@@ -41,6 +41,14 @@
           <div class="status-info">
             <span id="placedCount">0</span> / <span id="requiredCount">0</span> 件商品
           </div>
+          <div class="status-score">
+            <span class="score-label">🏆 分数：</span>
+            <span id="scoreDisplay" class="score-value">0</span>
+          </div>
+          <div class="status-timer">
+            <span class="timer-label">⏱️ </span>
+            <span id="timerDisplay" class="timer-value">00:00</span>
+          </div>
           <div class="status-result" id="statusResult">
             开始摆放商品吧！
           </div>
@@ -61,6 +69,35 @@
         </div>
       </aside>
     </main>
+  </div>
+
+  <div id="resultModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🎉 恭喜通关！</h2>
+      </div>
+      <div class="modal-body">
+        <div class="result-item">
+          <span class="result-label">最终得分</span>
+          <span id="finalScore" class="result-value result-score">0</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">用时</span>
+          <span id="finalTime" class="result-value">0分0秒</span>
+        </div>
+        <div class="result-item">
+          <span class="result-label">历史最高分</span>
+          <span id="highScore" class="result-value">0</span>
+        </div>
+        <div id="isNewRecord" class="new-record" style="display: none;">
+          🏆 新纪录！
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="closeModalBtn" class="btn btn-secondary">关闭</button>
+        <button id="retryBtn" class="btn btn-primary">再来一次</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
