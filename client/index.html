@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>货架摆放合规判定</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="app-header">
+      <h1>🏪 货架摆放合规判定</h1>
+      <div class="level-selector">
+        <label>选择关卡：</label>
+        <select id="levelSelect">
+          <option value="level1">第一关：基础分区</option>
+          <option value="level2">第二关：重物底层</option>
+          <option value="level3">第三关：综合挑战</option>
+        </select>
+      </div>
+    </header>
+
+    <main class="game-area">
+      <aside class="product-panel">
+        <h2>📦 商品库</h2>
+        <p class="hint">拖拽商品到货架上</p>
+        <div id="productList" class="product-list"></div>
+      </aside>
+
+      <section class="shelf-section">
+        <div class="level-info">
+          <h2 id="levelName">加载中...</h2>
+          <p id="levelDesc" class="level-desc"></p>
+        </div>
+
+        <div class="shelf-container">
+          <div id="shelf" class="shelf"></div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-info">
+            <span id="placedCount">0</span> / <span id="requiredCount">0</span> 件商品
+          </div>
+          <div class="status-result" id="statusResult">
+            开始摆放商品吧！
+          </div>
+        </div>
+
+        <div class="controls">
+          <button id="undoBtn" class="btn btn-secondary" disabled>↶ 撤销</button>
+          <button id="clearBtn" class="btn btn-danger">🗑 清空货架</button>
+          <button id="checkBtn" class="btn btn-primary">✓ 检查合规</button>
+        </div>
+      </section>
+
+      <aside class="violation-panel">
+        <h2>⚠️ 违规列表</h2>
+        <div id="violationList" class="violation-list">
+          <p class="empty-tip">暂无违规</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
