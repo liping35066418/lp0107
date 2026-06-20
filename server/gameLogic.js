@@ -17,6 +17,9 @@ const PRODUCTS = [
   { id: 'heavy4', name: '食用油', category: 'grocery', weight: 'heavy', icon: '🫒' },
 ];
 
+const WEIGHT_ORDER = { light: 1, medium: 2, heavy: 3 };
+const WEIGHT_LABEL = { light: '轻', medium: '中', heavy: '重' };
+
 const LEVELS = {
   level1: {
     id: 'level1',
@@ -40,17 +43,17 @@ const LEVELS = {
   level2: {
     id: 'level2',
     name: '第二关：重物底层',
-    description: '重物必须放在最底层，轻物可放任意层',
+    description: '重物必须放在最底层，轻物可放任意层，同时禁止重的压轻的',
     shelfRows: 3,
     shelfCols: 4,
     zoneConfig: null,
-    rules: ['weight'],
+    rules: ['weight', 'stack'],
     requiredProducts: ['heavy1', 'heavy2', 'chips1', 'candy1', 'drink1', 'heavy3'],
   },
   level3: {
     id: 'level3',
     name: '第三关：综合挑战',
-    description: '分区摆放 + 重物底层，双重规则同时生效',
+    description: '分区摆放 + 重物底层 + 叠放不重压轻，三重规则同时生效',
     shelfRows: 4,
     shelfCols: 4,
     zoneConfig: {
@@ -65,7 +68,7 @@ const LEVELS = {
       candy: '糖果区',
       grocery: '杂货区',
     },
-    rules: ['zone', 'weight'],
+    rules: ['zone', 'weight', 'stack'],
     requiredProducts: [
       'chips1', 'chips2', 'chips3',
       'drink1', 'drink2', 'drink3',
@@ -85,6 +88,15 @@ function getLevel(levelId) {
 
 function getProductById(productId) {
   return PRODUCTS.find(p => p.id === productId);
+}
+
+function addViolation(violations, violationMap, row, col, violation) {
+  const key = `${row}-${col}`;
+  if (!violationMap[key]) {
+    violationMap[key] = [];
+  }
+  violationMap[key].push(violation);
+  violations.push({ row, col, ...violation });
 }
 
 function validateShelf(levelId, shelfState) {
@@ -109,13 +121,10 @@ function validateShelf(levelId, shelfState) {
       const product = getProductById(slot.productId);
       if (!product) continue;
 
-      const key = `${row}-${col}`;
-      const slotViolations = [];
-
       if (level.rules.includes('zone') && level.zoneConfig) {
         const expectedCategory = level.zoneConfig[`row${row}`];
         if (expectedCategory && product.category !== expectedCategory) {
-          slotViolations.push({
+          addViolation(violations, violationMap, row, col, {
             type: 'zone',
             message: `${product.name}应放在${level.zoneLabels[expectedCategory]}`,
           });
@@ -125,16 +134,37 @@ function validateShelf(levelId, shelfState) {
       if (level.rules.includes('weight')) {
         const bottomRow = level.shelfRows - 1;
         if (product.weight === 'heavy' && row !== bottomRow) {
-          slotViolations.push({
+          addViolation(violations, violationMap, row, col, {
             type: 'weight',
-            message: `${product.name}是重物，应放在最底层`,
+            message: `${product.name}(${WEIGHT_LABEL[product.weight]})是重物，应放在最底层`,
           });
         }
       }
+    }
+  }
 
-      if (slotViolations.length > 0) {
-        violationMap[key] = slotViolations;
-        violations.push(...slotViolations.map(v => ({ row, col, ...v })));
+  if (level.rules.includes('stack')) {
+    for (let col = 0; col < level.shelfCols; col++) {
+      for (let row = 0; row < level.shelfRows - 1; row++) {
+        const topSlotIndex = row * level.shelfCols + col;
+        const bottomSlotIndex = (row + 1) * level.shelfCols + col;
+        const topSlot = shelfState.slots[topSlotIndex];
+        const bottomSlot = shelfState.slots[bottomSlotIndex];
+
+        if (!topSlot || !topSlot.productId || !bottomSlot || !bottomSlot.productId) {
+          continue;
+        }
+
+        const topProduct = getProductById(topSlot.productId);
+        const bottomProduct = getProductById(bottomSlot.productId);
+        if (!topProduct || !bottomProduct) continue;
+
+        if (WEIGHT_ORDER[topProduct.weight] > WEIGHT_ORDER[bottomProduct.weight]) {
+          addViolation(violations, violationMap, row, col, {
+            type: 'stack',
+            message: `第${row + 1}行${col + 1}列的${topProduct.name}(${WEIGHT_LABEL[topProduct.weight]})压在了第${row + 2}行${col + 1}列的${bottomProduct.name}(${WEIGHT_LABEL[bottomProduct.weight]})上，重的不能压轻的`,
+          });
+        }
       }
     }
   }

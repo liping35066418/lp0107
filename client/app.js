@@ -5,8 +5,10 @@ const state = {
   products: [],
   shelfSlots: [],
   history: [],
+  future: [],
   violations: {},
   isValid: false,
+  dragSource: null,
 };
 
 const elements = {
@@ -20,6 +22,7 @@ const elements = {
   statusResult: document.getElementById('statusResult'),
   violationList: document.getElementById('violationList'),
   undoBtn: document.getElementById('undoBtn'),
+  redoBtn: document.getElementById('redoBtn'),
   clearBtn: document.getElementById('clearBtn'),
   checkBtn: document.getElementById('checkBtn'),
 };
@@ -45,6 +48,7 @@ async function loadLevel(levelId) {
   state.currentLevel = await res.json();
   state.shelfSlots = new Array(state.currentLevel.shelfRows * state.currentLevel.shelfCols).fill(null);
   state.history = [];
+  state.future = [];
   state.violations = {};
   state.isValid = false;
 
@@ -52,7 +56,7 @@ async function loadLevel(levelId) {
   renderProductList();
   renderShelf();
   updateStatus();
-  updateUndoButton();
+  updateUndoRedoButtons();
   renderViolations();
 }
 
@@ -77,6 +81,7 @@ function renderProductList() {
       <div class="product-item ${isPlaced ? 'placed' : ''}" 
            draggable="${!isPlaced}" 
            data-product-id="${p.id}"
+           data-source-type="list"
            title="${p.name}">
         <span class="product-icon">${p.icon}</span>
         <div class="product-info">
@@ -121,7 +126,7 @@ function renderShelf() {
              data-col="${col}"
              data-slot-index="${slotIndex}">
           ${hasViolation ? `<span class="violation-badge">${violationCount}</span>` : ''}
-          ${slot ? renderSlotProduct(slot) : ''}
+          ${slot ? renderSlotProduct(slot, slotIndex) : ''}
         </div>
       `;
     }
@@ -137,13 +142,22 @@ function renderShelf() {
     slot.addEventListener('drop', handleDrop);
     slot.addEventListener('click', handleSlotClick);
   });
+
+  elements.shelf.querySelectorAll('.slot-product').forEach(el => {
+    el.addEventListener('dragstart', handleSlotDragStart);
+    el.addEventListener('dragend', handleSlotDragEnd);
+  });
 }
 
-function renderSlotProduct(slot) {
+function renderSlotProduct(slot, slotIndex) {
   const product = state.products.find(p => p.id === slot.productId);
   if (!product) return '';
   return `
-    <div class="slot-product">
+    <div class="slot-product" 
+         draggable="true"
+         data-product-id="${product.id}"
+         data-source-slot="${slotIndex}"
+         data-source-type="shelf">
       <span class="slot-product-icon">${product.icon}</span>
       <span class="slot-product-name">${product.name}</span>
     </div>
@@ -152,12 +166,41 @@ function renderSlotProduct(slot) {
 
 function handleDragStart(e) {
   e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', e.currentTarget.dataset.productId);
+  e.dataTransfer.setData('text/plain', JSON.stringify({
+    productId: e.currentTarget.dataset.productId,
+    sourceType: e.currentTarget.dataset.sourceType,
+  }));
   e.currentTarget.classList.add('dragging');
+  state.dragSource = {
+    productId: e.currentTarget.dataset.productId,
+    sourceType: 'list',
+  };
 }
 
 function handleDragEnd(e) {
   e.currentTarget.classList.remove('dragging');
+  state.dragSource = null;
+}
+
+function handleSlotDragStart(e) {
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', JSON.stringify({
+    productId: e.currentTarget.dataset.productId,
+    sourceType: e.currentTarget.dataset.sourceType,
+    sourceSlot: parseInt(e.currentTarget.dataset.sourceSlot),
+  }));
+  e.currentTarget.classList.add('dragging');
+  state.dragSource = {
+    productId: e.currentTarget.dataset.productId,
+    sourceType: 'shelf',
+    sourceSlot: parseInt(e.currentTarget.dataset.sourceSlot),
+  };
+  e.stopPropagation();
+}
+
+function handleSlotDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  state.dragSource = null;
 }
 
 function handleDragOver(e) {
@@ -174,12 +217,19 @@ function handleDrop(e) {
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
 
-  const productId = e.dataTransfer.getData('text/plain');
-  const slotIndex = parseInt(e.currentTarget.dataset.slotIndex);
+  let dragData;
+  try {
+    dragData = JSON.parse(e.dataTransfer.getData('text/plain'));
+  } catch (err) {
+    return;
+  }
+
+  const { productId, sourceType, sourceSlot } = dragData;
+  const targetSlotIndex = parseInt(e.currentTarget.dataset.slotIndex);
   const row = parseInt(e.currentTarget.dataset.row);
   const col = parseInt(e.currentTarget.dataset.col);
 
-  placeProduct(productId, slotIndex, row, col);
+  placeOrSwapProduct(productId, sourceType, sourceSlot, targetSlotIndex, row, col);
 }
 
 function handleSlotClick(e) {
@@ -189,22 +239,48 @@ function handleSlotClick(e) {
   }
 }
 
-function placeProduct(productId, slotIndex, row, col) {
-  const oldSlot = state.shelfSlots[slotIndex];
+function placeOrSwapProduct(productId, sourceType, sourceSlot, targetSlotIndex, row, col) {
+  const targetSlot = state.shelfSlots[targetSlotIndex];
+  const currentSourceIndex = state.shelfSlots.findIndex(s => s && s.productId === productId);
 
-  saveHistory();
-
-  const existingIndex = state.shelfSlots.findIndex(s => s && s.productId === productId);
-  if (existingIndex !== -1) {
-    state.shelfSlots[existingIndex] = null;
+  if (sourceType === 'shelf' && sourceSlot === targetSlotIndex) {
+    return;
   }
 
-  state.shelfSlots[slotIndex] = { productId, row, col };
+  saveHistory();
+  state.future = [];
+
+  if (targetSlot) {
+    const targetProductId = targetSlot.productId;
+
+    if (sourceType === 'shelf' && sourceSlot !== undefined) {
+      const sourceRow = Math.floor(sourceSlot / state.currentLevel.shelfCols);
+      const sourceCol = sourceSlot % state.currentLevel.shelfCols;
+      state.shelfSlots[sourceSlot] = { productId: targetProductId, row: sourceRow, col: sourceCol };
+    } else {
+      const emptyIndex = currentSourceIndex !== -1 && currentSourceIndex !== targetSlotIndex
+        ? currentSourceIndex
+        : state.shelfSlots.findIndex(s => s === null);
+      if (emptyIndex !== -1) {
+        const emptyRow = Math.floor(emptyIndex / state.currentLevel.shelfCols);
+        const emptyCol = emptyIndex % state.currentLevel.shelfCols;
+        state.shelfSlots[emptyIndex] = { productId: targetProductId, row: emptyRow, col: emptyCol };
+      }
+    }
+  } else {
+    if (sourceType === 'shelf' && sourceSlot !== undefined) {
+      state.shelfSlots[sourceSlot] = null;
+    } else if (currentSourceIndex !== -1 && currentSourceIndex !== targetSlotIndex) {
+      state.shelfSlots[currentSourceIndex] = null;
+    }
+  }
+
+  state.shelfSlots[targetSlotIndex] = { productId, row, col };
 
   renderProductList();
   renderShelf();
   updateStatus();
-  updateUndoButton();
+  updateUndoRedoButtons();
   validateShelf();
 }
 
@@ -212,18 +288,19 @@ function removeProduct(slotIndex) {
   if (!state.shelfSlots[slotIndex]) return;
 
   saveHistory();
+  state.future = [];
   state.shelfSlots[slotIndex] = null;
 
   renderProductList();
   renderShelf();
   updateStatus();
-  updateUndoButton();
+  updateUndoRedoButtons();
   validateShelf();
 }
 
 function saveHistory() {
   state.history.push(JSON.parse(JSON.stringify(state.shelfSlots)));
-  if (state.history.length > 50) {
+  if (state.history.length > 100) {
     state.history.shift();
   }
 }
@@ -231,11 +308,26 @@ function saveHistory() {
 function undo() {
   if (state.history.length === 0) return;
 
+  state.future.push(JSON.parse(JSON.stringify(state.shelfSlots)));
   state.shelfSlots = state.history.pop();
+
   renderProductList();
   renderShelf();
   updateStatus();
-  updateUndoButton();
+  updateUndoRedoButtons();
+  validateShelf();
+}
+
+function redo() {
+  if (state.future.length === 0) return;
+
+  state.history.push(JSON.parse(JSON.stringify(state.shelfSlots)));
+  state.shelfSlots = state.future.pop();
+
+  renderProductList();
+  renderShelf();
+  updateStatus();
+  updateUndoRedoButtons();
   validateShelf();
 }
 
@@ -243,11 +335,12 @@ function clearShelf() {
   if (state.shelfSlots.every(s => s === null)) return;
   
   saveHistory();
+  state.future = [];
   state.shelfSlots = new Array(state.currentLevel.shelfRows * state.currentLevel.shelfCols).fill(null);
   renderProductList();
   renderShelf();
   updateStatus();
-  updateUndoButton();
+  updateUndoRedoButtons();
   validateShelf();
 }
 
@@ -258,8 +351,9 @@ function updateStatus() {
   elements.requiredCount.textContent = required;
 }
 
-function updateUndoButton() {
+function updateUndoRedoButtons() {
   elements.undoBtn.disabled = state.history.length === 0;
+  elements.redoBtn.disabled = state.future.length === 0;
 }
 
 function showStatus(message, type = '') {
@@ -315,6 +409,7 @@ function renderViolations(result) {
   const typeLabels = {
     zone: '分区违规',
     weight: '重量违规',
+    stack: '叠放违规',
     missing: '缺少商品',
   };
 
@@ -332,13 +427,18 @@ function bindEvents() {
   });
 
   elements.undoBtn.addEventListener('click', undo);
+  elements.redoBtn.addEventListener('click', redo);
   elements.clearBtn.addEventListener('click', clearShelf);
   elements.checkBtn.addEventListener('click', validateShelf);
 
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
       undo();
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      redo();
     }
   });
 }
